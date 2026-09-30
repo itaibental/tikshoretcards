@@ -1140,6 +1140,41 @@
   }
   function signOutUser(){ authState = null; saveAuthState(); }
 
+  // ---------- automatic, password-free student identity ----------
+  // every student who types their name gets a silent, anonymous Firebase
+  // account behind the scenes (no username/password to remember) so their
+  // progress and game results sync to the cloud and show up in the teacher
+  // dashboard automatically.
+  async function signInAnonymousStudent(){
+    const res = await fetch(`${FB_AUTH_BASE}/accounts:signUp?key=${FIREBASE_CONFIG.apiKey}`, {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({returnSecureToken:true})
+    });
+    const data = await res.json();
+    if(!res.ok || data.error) throw new Error((data.error&&data.error.message)||"anonymous sign-in failed");
+    authState = { idToken:data.idToken, refreshToken:data.refreshToken, uid:data.localId, username:getStudentName(), expiresAt: Date.now()+Number(data.expiresIn)*1000 };
+    saveAuthState();
+    return authState;
+  }
+  // ensures this device has a cloud identity tied to the given name, and
+  // pushes the student's current name + progress to Firestore right away so
+  // the teacher dashboard picks them up without any manual sign-up step
+  async function ensureStudentSynced(name){
+    try{
+      if(!authState) await signInAnonymousStudent();
+      authState.username = name;
+      saveAuthState();
+      await firestoreSetDoc(authState.uid, {
+        username: name, createdAt: new Date().toISOString(),
+        learned: store.learned||{}, lastScore: store.lastScore, lastTotal: store.lastTotal,
+        streak: store.streak||0, gameHistory: store.gameHistory||[]
+      });
+    }catch(e){
+      // offline or the preview environment blocks external network calls - that's fine,
+      // progress still saves locally and will sync next time the app can reach Firebase
+    }
+  }
+
   let cloudSyncTimer = null;
   function scheduleCloudSync(){
     if(!authState) return;
@@ -2169,66 +2204,42 @@
     });
   }
 
+  // there's no login/signup flow any more - typing a name at the name gate
+  // automatically registers the student in the cloud (see ensureStudentSynced),
+  // so this screen just shows their name + progress and lets them start over.
   function renderAccountView(){
     const body = $("#account-body");
-    if(authState){
-      $("#account-sub").textContent = "מחוברים כ-" + authState.username;
-      const rows = arenaProgressList();
-      body.innerHTML = `
-        <div class="profile-card">
-          <div class="profile-avatar">${(authState.username||"?")[0].toUpperCase()}</div>
-          <div>
-            <b style="font-size:16px;">${authState.username}</b>
-            <div class="sub" style="margin-top:2px;">ההתקדמות שלך נשמרת אוטומטית בענן</div>
-          </div>
+    const name = getStudentName() || "תלמיד/ה";
+    $("#account-sub").textContent = "ההתקדמות שלך נשמרת אוטומטית - אין צורך בסיסמה";
+    const rows = arenaProgressList();
+    body.innerHTML = `
+      <div class="profile-card">
+        <div class="profile-avatar">${name[0] ? name[0].toUpperCase() : "?"}</div>
+        <div>
+          <b style="font-size:16px;">${name}</b>
+          <div class="sub" style="margin-top:2px;">ההתקדמות שלך נשמרת אוטומטית בענן</div>
         </div>
-        <div class="section-title" style="margin-bottom:6px;">התקדמות לפי זירה</div>
-        <div style="border:1.5px solid var(--line); border-radius:16px; padding:4px 14px; margin-bottom:18px;">
-          ${rows.map(r=>{
-            const pct = r.total ? Math.round(100*r.learned/r.total) : 0;
-            const status = r.total===0 ? "" : (r.learned===0 ? "לא התחלתם עדיין - כדאי להתחיל! 🚀" : (r.learned>=r.total ? "סיימתם! אפשר לחזור על החומר לחיזוק 🔁" : "כדאי להמשיך מאיפה שעצרתם ➡️"));
-            return `<div class="progress-row">
-              <div class="progress-row-top"><span>${r.arena.emoji} ${r.arena.title} · ${r.arena.sub}</span><b>${r.learned}/${r.total}</b></div>
-              <div class="progress-bar-track"><div class="progress-bar-fill" style="width:${pct}%"></div></div>
-              ${status ? `<div class="sub" style="margin-top:6px;">${status}</div>` : ""}
-            </div>`;
-          }).join("")}
-        </div>
-        <button class="btn-secondary" id="signout-btn">התנתקות</button>`;
-      $("#signout-btn").addEventListener("click", ()=>{ signOutUser(); renderAccountView(); toast("התנתקתם - ההתקדמות נשמרת גם במכשיר הזה"); });
-    } else {
-      $("#account-sub").textContent = "אפשר להמשיך גם בלי חשבון - ההתקדמות תישמר רק במכשיר הזה";
-      body.innerHTML = `
-        <div class="auth-tabs">
-          <button class="auth-tab${accountAuthMode==="login"?" active":""}" data-mode="login">התחברות</button>
-          <button class="auth-tab${accountAuthMode==="signup"?" active":""}" data-mode="signup">הרשמה</button>
-        </div>
-        <div class="auth-field"><label>שם משתמש</label><input id="auth-username" type="text" autocomplete="username" placeholder="לדוגמה: dani123"></div>
-        <div class="auth-field"><label>סיסמה</label><input id="auth-password" type="password" autocomplete="current-password" placeholder="לפחות 6 תווים"></div>
-        <div class="auth-error" id="auth-error"></div>
-        <button class="btn-primary" id="auth-submit">${accountAuthMode==="login" ? "התחברות" : "יצירת חשבון"}</button>`;
-      $$(".auth-tab").forEach(tab=>tab.addEventListener("click", ()=>{ accountAuthMode = tab.getAttribute("data-mode"); renderAccountView(); }));
-      $("#auth-submit").addEventListener("click", async ()=>{
-        const u = $("#auth-username").value.trim();
-        const p = $("#auth-password").value;
-        const err = $("#auth-error");
-        err.textContent = "";
-        if(!u || !p){ err.textContent = "יש למלא שם משתמש וסיסמה."; return; }
-        const btn = $("#auth-submit"); btn.disabled = true; btn.textContent = "רגע...";
-        try{
-          if(accountAuthMode === "signup") await signUp(u,p); else await signIn(u,p);
-          renderHome();
-          renderAccountView();
-          toast(accountAuthMode==="signup" ? "החשבון נוצר בהצלחה! 🎉" : "התחברתם בהצלחה!");
-        }catch(e){
-          const isNetworkBlock = e instanceof TypeError || /Failed to fetch|NetworkError|Load failed/i.test(e.message||"");
-          err.textContent = isNetworkBlock
-            ? "לא ניתן להתחבר מהגרסה הזו של האפליקציה (הדף חוסם גישה לאינטרנט חיצוני). המשיכו בלי התחברות, או השתמשו בקישור המלא שקיבלתם מהמורה."
-            : (e.message || "אירעה שגיאה, נסו שוב.");
-          btn.disabled = false; btn.textContent = accountAuthMode==="login" ? "התחברות" : "יצירת חשבון";
-        }
-      });
-    }
+      </div>
+      <div class="section-title" style="margin-bottom:6px;">התקדמות לפי זירה</div>
+      <div style="border:1.5px solid var(--line); border-radius:16px; padding:4px 14px; margin-bottom:18px;">
+        ${rows.map(r=>{
+          const pct = r.total ? Math.round(100*r.learned/r.total) : 0;
+          const status = r.total===0 ? "" : (r.learned===0 ? "לא התחלתם עדיין - כדאי להתחיל! 🚀" : (r.learned>=r.total ? "סיימתם! אפשר לחזור על החומר לחיזוק 🔁" : "כדאי להמשיך מאיפה שעצרתם ➡️"));
+          return `<div class="progress-row">
+            <div class="progress-row-top"><span>${r.arena.emoji} ${r.arena.title} · ${r.arena.sub}</span><b>${r.learned}/${r.total}</b></div>
+            <div class="progress-bar-track"><div class="progress-bar-fill" style="width:${pct}%"></div></div>
+            ${status ? `<div class="sub" style="margin-top:6px;">${status}</div>` : ""}
+          </div>`;
+        }).join("")}
+      </div>
+      <button class="btn-secondary" id="reset-name-btn">התחלה מחדש עם שם אחר</button>`;
+    $("#reset-name-btn").addEventListener("click", ()=>{
+      if(confirm("לאפס את השם ולהתחיל מחדש כתלמיד/ה חדש/ה במכשיר הזה?")){
+        try{ localStorage.removeItem(STUDENT_NAME_KEY); }catch(e){}
+        signOutUser();
+        location.reload();
+      }
+    });
   }
 
   // ---------- TEACHER DASHBOARD (hidden entry: tap the logo 5x, password 1234) ----------
@@ -2832,6 +2843,7 @@
     $("#name-gate-msg").textContent = "";
     renderHome();
     showView("view-home");
+    ensureStudentSynced(name); // registers/updates this student in the cloud silently, no password needed
   }
   $("#name-gate-submit").addEventListener("click", submitNameGate);
   $("#name-gate-input").addEventListener("keydown", (e)=>{
@@ -2844,6 +2856,8 @@
     setTimeout(()=>{ try{ $("#name-gate-input").focus(); }catch(e){} }, 50);
   } else {
     renderHome();
+    // returning student: make sure their cloud identity/sync is still in place
+    ensureStudentSynced(getStudentName());
   }
 })();
 </script>
