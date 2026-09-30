@@ -1,3 +1,8 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>קפסולות תקשורת</title>
 <meta name="description" content="למידה בסגנון סטאש: בחרו מושגי תקשורת מתוך אגרון המושגים, עברו על כרטיסי תובנה קצרים וסיימו במבדק זיכרון.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -17,7 +22,7 @@
     --accent-2-ink:#f2fbf8;
     --bad:#b3261e;
     --shadow: 0 1px 2px rgba(28,20,10,.06), 0 8px 24px -12px rgba(28,20,10,.28);
-    --shell-bg: rgba(255,255,255,1);
+    --shell-bg: rgba(255,255,255,.68);
     --shell-border: rgba(255,255,255,.55);
     --shell-shadow: 0 40px 80px -24px rgba(20,10,40,.55), 0 0 0 1px rgba(255,255,255,.25) inset;
     --overlay-1: rgba(10,6,20,.15);
@@ -38,7 +43,7 @@
       --accent-2-ink:#062420;
       --bad:#ff8a80;
       --shadow: 0 1px 2px rgba(0,0,0,.4), 0 10px 28px -12px rgba(0,0,0,.6);
-      --shell-bg: rgba(36,5,5,1);
+      --shell-bg: rgba(36,5,5,.72);
       --shell-border: rgba(255,255,255,.12);
       --shell-shadow: 0 40px 90px -20px rgba(0,0,0,.75), 0 0 0 1px rgba(255,255,255,.06) inset;
       --overlay-1: rgba(35,0,0,.4);
@@ -59,7 +64,7 @@
     --accent-2-ink:#062420;
     --bad:#ff8a80;
     --shadow: 0 1px 2px rgba(0,0,0,.4), 0 10px 28px -12px rgba(0,0,0,.6);
-    --shell-bg: rgba(36,5,5,1);
+    --shell-bg: rgba(36,5,5,.72);
     --shell-border: rgba(255,255,255,.12);
     --shell-shadow: 0 40px 90px -20px rgba(0,0,0,.75), 0 0 0 1px rgba(255,255,255,.06) inset;
     --overlay-1: rgba(35,0,0,.4);
@@ -70,9 +75,10 @@
   *{box-sizing:border-box;}
   html,body{height:100%;}
   body{
-    /* plain fill around the mobile frame (no background photo) - on an actual
-       phone this area is invisible anyway since the app fills the whole screen */
-    background:#0b0b10;
+    background:
+      linear-gradient(180deg, var(--overlay-1), var(--overlay-2)),
+      url('bg.jpg') center/cover no-repeat fixed,
+      var(--bg);
     color:var(--ink);
     font-family:'Rubik',system-ui,sans-serif;
     direction:rtl;
@@ -531,6 +537,8 @@
   }
 </style>
 
+</head>
+<body>
 <div class="app" id="app">
 
   <!-- NAME GATE -->
@@ -918,6 +926,37 @@
 <script>
 (function(){
   "use strict";
+
+  // ---------- robust full-screen mobile frame sizing ----------
+  // CSS alone (100dvh + aspect-ratio) can misbehave on some real mobile browsers
+  // (older WebViews, quirks-mode edge cases), leaving a big blank area below the
+  // app instead of filling the screen. This computes the exact pixel size that
+  // keeps the 9:16 shape while fully using the real, current viewport, and
+  // re-applies it on resize/orientation change/address-bar show-hide.
+  function fitAppFrame(){
+    const app = document.getElementById("app");
+    if(!app) return;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    if(!vw || !vh) return;
+    const ratio = 9/16; // width/height
+    let w, h;
+    if(vw/vh <= ratio){
+      // already phone-shaped (or taller/narrower) - fill the entire real screen
+      w = vw; h = vh;
+    } else {
+      // wider than a phone (tablet/desktop) - letterbox to a centered 9:16 frame
+      h = vh; w = Math.round(h*ratio);
+    }
+    app.style.width = w + "px";
+    app.style.height = h + "px";
+  }
+  fitAppFrame();
+  window.addEventListener("resize", fitAppFrame);
+  window.addEventListener("orientationchange", ()=>setTimeout(fitAppFrame, 60));
+  if(window.visualViewport){
+    window.visualViewport.addEventListener("resize", fitAppFrame);
+  }
 
   // ---------- storage ----------
   const STORE_KEY = "tikshoret_stash_v1";
@@ -2780,3 +2819,6 @@
   }
 })();
 </script>
+
+</body>
+</html>
