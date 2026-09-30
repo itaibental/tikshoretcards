@@ -223,6 +223,7 @@
     padding:15px; border-radius:16px; box-shadow:var(--shadow);
   }
   .btn-primary:disabled{opacity:.4;}
+  .btn-primary.gated{opacity:.4;}
   .btn-secondary{
     display:flex; align-items:center; justify-content:center; gap:8px; width:100%;
     background:var(--surface); color:var(--ink); font-weight:700; font-size:15px; border:1.5px solid var(--line);
@@ -870,7 +871,7 @@
         <div id="quiz-options"></div>
       </div>
       <div class="quiz-footer">
-        <button class="btn-primary" id="quiz-next-btn" disabled>שאלה הבאה</button>
+        <button class="btn-primary gated" id="quiz-next-btn">שאלה הבאה</button>
       </div>
     </div>
 
@@ -2495,6 +2496,17 @@
   let pendingQuizStartFn = null;
   let answeredThisQuestion = false;
   let timerExpiredThisQuestion = false;
+  // the "next question" button is gated (visually dimmed, but never truly
+  // disabled) until the 15s timer is satisfied - kept clickable so the
+  // 5-rapid-taps override below can still register clicks on it
+  let nextBtnReady = false;
+  let nextBtnBypassClicks = 0;
+  let nextBtnBypassTimer = null;
+  function setNextBtnGated(ready){
+    nextBtnReady = ready;
+    const b = $("#quiz-next-btn");
+    if(b) b.classList.toggle("gated", !ready);
+  }
 
   function updateLiveScoreDisplay(){
     const el = $("#quiz-live-score");
@@ -2536,7 +2548,7 @@
   function handleQuestionTimeout(){
     timerExpiredThisQuestion = true;
     if(answeredThisQuestion){
-      $("#quiz-next-btn").disabled = false;
+      setNextBtnGated(true);
       return;
     }
     const el = $("#timeout-modal-backdrop");
@@ -2646,15 +2658,31 @@
       b.addEventListener("click", ()=>answerQuiz(i));
       optsWrap.appendChild(b);
     });
-    $("#quiz-next-btn").disabled = true;
+    nextBtnBypassClicks = 0;
+    clearTimeout(nextBtnBypassTimer);
+    setNextBtnGated(false);
     $("#quiz-next-btn").textContent = quizPos===quizQueue.length-1 ? "לתוצאות" : "שאלה הבאה";
     $("#quiz-next-btn").onclick = ()=>{
-      stopQuestionTimer();
-      if(quizPos < quizQueue.length-1){ quizPos++; renderQuiz(); }
-      else { showResults(); }
+      if(nextBtnReady){ advanceQuiz(); return; }
+      // secret override: 5 rapid taps on the (still-gated) button skip the wait
+      nextBtnBypassClicks++;
+      clearTimeout(nextBtnBypassTimer);
+      nextBtnBypassTimer = setTimeout(()=>{ nextBtnBypassClicks = 0; }, 1500);
+      if(nextBtnBypassClicks >= 5){
+        nextBtnBypassClicks = 0;
+        clearTimeout(nextBtnBypassTimer);
+        advanceQuiz();
+      }
     };
     updateLiveScoreDisplay();
     startQuestionTimer();
+  }
+
+  function advanceQuiz(){
+    stopQuestionTimer();
+    hideTimeoutModal();
+    if(quizPos < quizQueue.length-1){ quizPos++; renderQuiz(); }
+    else { showResults(); }
   }
 
   function answerQuiz(choice){
@@ -2699,7 +2727,7 @@
     // the "next question" button unlocks only once the mandatory 15 seconds
     // have actually elapsed — answering early does not skip the wait
     if(timerExpiredThisQuestion){
-      $("#quiz-next-btn").disabled = false;
+      setNextBtnGated(true);
     }
   }
   const timeoutModalCloseBtn = $("#timeout-modal-close");
